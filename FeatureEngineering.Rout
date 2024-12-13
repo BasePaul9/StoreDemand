@@ -1,0 +1,139 @@
+
+R version 4.3.3 (2024-02-29) -- "Angel Food Cake"
+Copyright (C) 2024 The R Foundation for Statistical Computing
+Platform: x86_64-pc-linux-gnu (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+  Natural language support but running in an English locale
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> library(tidyverse)
+── Attaching core tidyverse packages ──────────────────────── tidyverse 2.0.0 ──
+✔ dplyr     1.1.4     ✔ readr     2.1.5
+✔ forcats   1.0.0     ✔ stringr   1.5.1
+✔ ggplot2   3.5.1     ✔ tibble    3.2.1
+✔ lubridate 1.9.3     ✔ tidyr     1.3.1
+✔ purrr     1.0.2     
+── Conflicts ────────────────────────────────────────── tidyverse_conflicts() ──
+✖ dplyr::filter() masks stats::filter()
+✖ dplyr::lag()    masks stats::lag()
+ℹ Use the conflicted package (<http://conflicted.r-lib.org/>) to force all conflicts to become errors
+> library(tidymodels)
+── Attaching packages ────────────────────────────────────── tidymodels 1.2.0 ──
+✔ broom        1.0.7     ✔ rsample      1.2.1
+✔ dials        1.3.0     ✔ tune         1.2.1
+✔ infer        1.0.7     ✔ workflows    1.1.4
+✔ modeldata    1.4.0     ✔ workflowsets 1.1.0
+✔ parsnip      1.2.1     ✔ yardstick    1.3.1
+✔ recipes      1.1.0     
+── Conflicts ───────────────────────────────────────── tidymodels_conflicts() ──
+✖ scales::discard() masks purrr::discard()
+✖ dplyr::filter()   masks stats::filter()
+✖ recipes::fixed()  masks stringr::fixed()
+✖ dplyr::lag()      masks stats::lag()
+✖ yardstick::spec() masks readr::spec()
+✖ recipes::step()   masks stats::step()
+• Use suppressPackageStartupMessages() to eliminate package startup messages
+> library(vroom)
+
+Attaching package: ‘vroom’
+
+The following object is masked from ‘package:yardstick’:
+
+    spec
+
+The following object is masked from ‘package:scales’:
+
+    col_factor
+
+The following objects are masked from ‘package:readr’:
+
+    as.col_spec, col_character, col_date, col_datetime, col_double,
+    col_factor, col_guess, col_integer, col_logical, col_number,
+    col_skip, col_time, cols, cols_condense, cols_only, date_names,
+    date_names_lang, date_names_langs, default_locale, fwf_cols,
+    fwf_empty, fwf_positions, fwf_widths, locale, output_column,
+    problems, spec
+
+> library(dbarts)
+
+Attaching package: ‘dbarts’
+
+The following object is masked from ‘package:parsnip’:
+
+    bart
+
+The following object is masked from ‘package:tidyr’:
+
+    extract
+
+> library(ranger)
+> 
+> # setwd("./StoreDemand")
+> train <- vroom("train.csv")
+Rows: 913000 Columns: 4
+── Column specification ────────────────────────────────────────────────────────
+Delimiter: ","
+dbl  (3): store, item, sales
+date (1): date
+
+ℹ Use `spec()` to retrieve the full column specification for this data.
+ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.
+> test <- vroom("test.csv")
+Rows: 45000 Columns: 4
+── Column specification ────────────────────────────────────────────────────────
+Delimiter: ","
+dbl  (3): id, store, item
+date (1): date
+
+ℹ Use `spec()` to retrieve the full column specification for this data.
+ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.
+> 
+> storeItem <- train %>%
++   filter(store == 7, item == 27)
+> 
+> my_recipe <- recipe(sales ~ date, data = storeItem) %>%
++   step_rm(removals = c("store", "item")) %>%
++   step_date(date, features = "doy") %>%
++   step_range(date_doy, min = 0, max = pi) %>%
++   step_mutate(sinDOY=sin(date_doy), cosDOY=cos(date_doy)) %>%
++   step_date(date, features = c("dow", "month", "year"))
+> 
+> baked_data <- bake(prep(my_recipe), new_data = storeItem)
+> 
+> #### BART ####
+> 
+> bart_model <- parsnip::bart(
++   mode = "regression",
++   engine = "dbarts",
++   trees = 500,
++   prior_terminal_node_coef = tune(),
++   prior_terminal_node_expo = tune(),
++   prior_outcome_range = 2
++ )
+> 
+> bart_wf <- workflow() %>%
++   add_recipe(my_recipe) %>%
++   add_model(bart_model)
+> 
+> ## Grid of values to tune over
+> tuning_grid <- grid_regular(prior_terminal_node_coef(c(0.1, 1)),
++                             prior_terminal_node_expo(c(0.5, 2)),
++                             levels = 3) ## L^2 total tuning possibilities
+> 
+> ## Split data for CV
+> folds <- vfold_cv(train, v = 5, repeats = 1)
+> 
+> cv_results <- bart_wf %>%
++   tune_grid(resamples=folds,
++             grid=tuning_grid)
